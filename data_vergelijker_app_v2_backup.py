@@ -9,8 +9,9 @@ import plotly.graph_objects as go
 # Pagina configuratie voor volledig scherm (moet als eerste Streamlit commando zijn)
 st.set_page_config(layout="wide")
 
-# Logging setup - gebruik Streamlit's ingebouwde logging
-logging.basicConfig(format="%(asctime)s [%(levelname)s] %(message)s", level=logging.INFO)
+# Logging setup
+logging.basicConfig(filename="app_log.txt", level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 
 # Voeg CSS toe voor vaste tabs en verwijder lege ruimte
 st.markdown("""

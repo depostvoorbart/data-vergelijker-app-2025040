@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
-import snowflake.connector
 import logging
 import io
 import csv
-import plotly.graph_objects as go
 
 # Pagina configuratie voor volledig scherm (moet als eerste Streamlit commando zijn)
 st.set_page_config(layout="wide")
@@ -46,166 +44,122 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-def load_from_snowflake(user, password, account, warehouse, database, schema, query):
-    try:
-        conn = snowflake.connector.connect(
-            user=user,
-            password=password,
-            account=account,
-            warehouse=warehouse,
-            database=database,
-            schema=schema
-        )
-        cur = conn.cursor()
-        cur.execute(query)
-        df = cur.fetch_pandas_all()
-        cur.close()
-        conn.close()
-        return df
-    except Exception as e:
-        logging.error(f"Snowflake connectie- of queryfout: {e}")
-        raise
-
-def load_input(bron, label):
-    if bron == "Bestand (CSV/Excel)":
-        # Voeg een slider toe voor het aantal rijen
-        max_rows = st.slider(
-            f"Maximaal aantal rijen voor {label}",
-            min_value=1000,
-            max_value=1000000,
-            value=100000,
-            step=1000,
-            help="Beperk het aantal rijen om de vergelijking sneller te maken. Kies een lagere waarde voor grote bestanden."
-        )
-        
-        file = st.file_uploader(f"Upload bestand voor {label}", type=["csv", "xls", "xlsx"], key=f"file_uploader_{label}")
-        if file:
-            try:
-                # Bepaal het bestandstype op basis van de extensie
-                file_extension = file.name.split('.')[-1].lower()
+def load_input(label):
+    # Voeg een slider toe voor het aantal rijen
+    max_rows = st.slider(
+        f"Maximaal aantal rijen voor {label}",
+        min_value=1000,
+        max_value=1000000,
+        value=100000,
+        step=1000,
+        help="Beperk het aantal rijen om de vergelijking sneller te maken. Kies een lagere waarde voor grote bestanden."
+    )
+    
+    file = st.file_uploader(f"Upload bestand voor {label}", type=["csv", "xls", "xlsx"], key=f"file_uploader_{label}")
+    if file:
+        try:
+            # Bepaal het bestandstype op basis van de extensie
+            file_extension = file.name.split('.')[-1].lower()
+            
+            if file_extension == 'csv':
+                # Lees de eerste regel om te bepalen of er kolomnamen zijn
+                content = file.read().decode('utf-8')
+                file.seek(0)
                 
-                if file_extension == 'csv':
-                    # Lees de eerste regel om te bepalen of er kolomnamen zijn
-                    content = file.read().decode('utf-8')
-                    file.seek(0)
-                    
-                    # Controleer of het bestand leeg is
-                    if not content.strip():
-                        st.error("Het bestand is leeg")
-                        return None
-                    
-                    # Detecteer het scheidingsteken (comma of semicolon)
-                    first_line = content.split('\n')[0]
-                    if not first_line.strip():
-                        st.error("Het bestand bevat geen data")
-                        return None
-                        
-                    separator = ';' if ';' in first_line else ','
-                    
-                    # Gebruik csv.reader om correct met quotes en scheidingstekens om te gaan
-                    csv_reader = csv.reader(io.StringIO(content), delimiter=separator)
-                    headers = next(csv_reader)  # Eerste rij zijn de kolomnamen
-                    
-                    # Controleer of de headers numeriek zijn (geen echte kolomnamen)
-                    try:
-                        [int(h) for h in headers]
-                        st.warning("Geen kolomnamen gevonden, gebruik numerieke kolomnamen")
-                        # Maak betekenisvolle kolomnamen
-                        headers = [f"Kolom_{i}" for i in range(len(headers))]
-                    except ValueError:
-                        # Er zijn echte kolomnamen
-                        headers = [h.strip().strip('"').strip("'") for h in headers]
-                    
-                    # Controleer of er kolomnamen zijn
-                    if not headers:
-                        st.error("Geen kolomnamen gevonden in het bestand")
-                        return None
-                    
-                    # Controleer of er dubbele kolomnamen zijn
-                    if len(headers) != len(set(headers)):
-                        st.warning("Let op: Er zijn dubbele kolomnamen gevonden")
-                    
-                    # CSV opnieuw inlezen met pandas, nu met de juiste kolomnamen
-                    file.seek(0)
-                    df = pd.read_csv(file,
-                                   sep=separator,
-                                   names=headers,
-                                   skiprows=1,
-                                   dtype=str,  # Alles als string inlezen
-                                   na_values=['', 'nan', 'NaN', 'NULL', 'null'],
-                                   keep_default_na=True,
-                                   quoting=csv.QUOTE_MINIMAL,
-                                   quotechar='"',
-                                   on_bad_lines='warn',
-                                   nrows=max_rows)  # Beperk het aantal rijen
-                else:  # Excel bestand
-                    # Excel inlezen met alle kolommen als string en geen categorische data
-                    df = pd.read_excel(file, dtype=str, engine='openpyxl', nrows=max_rows)  # Beperk het aantal rijen
-                
-                # Controleer of er data is ingelezen
-                if df.empty:
-                    st.error("Geen data gevonden in het bestand")
+                # Controleer of het bestand leeg is
+                if not content.strip():
+                    st.error("Het bestand is leeg")
                     return None
                 
-                # Vervang NaN waarden door lege string
-                df = df.fillna('')
+                # Detecteer het scheidingsteken (comma of semicolon)
+                first_line = content.split('\n')[0]
+                if not first_line.strip():
+                    st.error("Het bestand bevat geen data")
+                    return None
+                    
+                separator = ';' if ';' in first_line else ','
                 
-                # Verwijder witruimte uit kolomnamen
-                df.columns = df.columns.str.strip()
+                # Gebruik csv.reader om correct met quotes en scheidingstekens om te gaan
+                csv_reader = csv.reader(io.StringIO(content), delimiter=separator)
+                headers = next(csv_reader)  # Eerste rij zijn de kolomnamen
                 
-                # Converteer alle waarden naar strings en verwijder categorische data
-                for col in df.columns:
-                    df[col] = df[col].apply(lambda x: str(x) if pd.notnull(x) else '')
+                # Controleer of de headers numeriek zijn (geen echte kolomnamen)
+                try:
+                    [int(h) for h in headers]
+                    st.warning("Geen kolomnamen gevonden, gebruik numerieke kolomnamen")
+                    # Maak betekenisvolle kolomnamen
+                    headers = [f"Kolom_{i}" for i in range(len(headers))]
+                except ValueError:
+                    # Er zijn echte kolomnamen
+                    headers = [h.strip().strip('"').strip("'") for h in headers]
                 
-                # Toon kolommen in een nette tabel
-                st.write(f"Beschikbare kolommen in {label}:")
-                kolomnamen_df = pd.DataFrame({'Kolomnaam': df.columns.tolist()})
-                st.dataframe(kolomnamen_df, use_container_width=True)
+                # Controleer of er kolomnamen zijn
+                if not headers:
+                    st.error("Geen kolomnamen gevonden in het bestand")
+                    return None
                 
-                # Toon eerste 3 regels in een nette tabel met verbeterde styling
-                st.write(f"Eerste 3 regels van {label}:")
-                preview_df = df.head(3).copy()
-                preview_df = preview_df.style.set_properties(**{'text-align': 'left'})
-                preview_df = preview_df.set_table_styles([
-                    {'selector': 'th', 'props': [('text-align', 'left')]},
-                    {'selector': 'td', 'props': [('text-align', 'left')]}
-                ])
-                st.dataframe(preview_df, use_container_width=True)
+                # Controleer of er dubbele kolomnamen zijn
+                if len(headers) != len(set(headers)):
+                    st.warning("Let op: Er zijn dubbele kolomnamen gevonden")
                 
-                return df
-            except Exception as e:
-                st.error(f"Fout bij inlezen bestand: {e}")
-                st.write("Tip: Controleer of:")
-                st.write("1. Het bestand niet leeg is")
-                st.write("2. Het bestand kolomnamen bevat")
-                if file_extension == 'csv':
-                    st.write("3. Het bestand gebruikt komma's of puntkomma's als scheidingsteken")
-                    st.write("4. Alle regels hetzelfde aantal kolommen hebben")
-                    st.write("5. Er geen onverwachte regelbreuken in de data zitten")
-                logging.error(f"Fout bij inlezen bestand ({label}): {e}")
-    elif bron == "Snowflake":
-        with st.expander(f"Snowflake login voor {label}"):
-            with st.form(f"snowflake_form_{label}"):
-                user = st.text_input("Gebruikersnaam", key=f"user_{label}")
-                password = st.text_input("Wachtwoord", type="password", key=f"pass_{label}")
-                account = st.text_input("Account", key=f"acc_{label}")
-                warehouse = st.text_input("Warehouse", key=f"wh_{label}")
-                database = st.text_input("Database", key=f"db_{label}")
-                schema = st.text_input("Schema", key=f"schema_{label}")
-                query = st.text_area("SQL-query", key=f"query_{label}")
-
-                submitted = st.form_submit_button("Laad data")
-                if submitted:
-                    try:
-                        df = load_from_snowflake(user, password, account, warehouse, database, schema, query)
-                        # Converteer alle kolommen naar string type
-                        df = df.astype(str)
-                        df = df.fillna('')
-                        st.success("Data geladen")
-                        return df
-                    except Exception as e:
-                        st.error(f"Fout bij ophalen data: {e}")
-                        logging.error(f"Fout bij ophalen data ({label}): {e}")
+                # CSV opnieuw inlezen met pandas, nu met de juiste kolomnamen
+                file.seek(0)
+                df = pd.read_csv(file,
+                               sep=separator,
+                               names=headers,
+                               skiprows=1,
+                               dtype=str,  # Alles als string inlezen
+                               na_values=['', 'nan', 'NaN', 'NULL', 'null'],
+                               keep_default_na=True,
+                               quoting=csv.QUOTE_MINIMAL,
+                               quotechar='"',
+                               on_bad_lines='warn',
+                               nrows=max_rows)  # Beperk het aantal rijen
+            else:  # Excel bestand
+                # Excel inlezen met alle kolommen als string en geen categorische data
+                df = pd.read_excel(file, dtype=str, engine='openpyxl', nrows=max_rows)  # Beperk het aantal rijen
+            
+            # Controleer of er data is ingelezen
+            if df.empty:
+                st.error("Geen data gevonden in het bestand")
+                return None
+            
+            # Vervang NaN waarden door lege string
+            df = df.fillna('')
+            
+            # Verwijder witruimte uit kolomnamen
+            df.columns = df.columns.str.strip()
+            
+            # Converteer alle waarden naar strings en verwijder categorische data
+            for col in df.columns:
+                df[col] = df[col].apply(lambda x: str(x) if pd.notnull(x) else '')
+            
+            # Toon kolommen in een nette tabel
+            st.write(f"Beschikbare kolommen in {label}:")
+            kolomnamen_df = pd.DataFrame({'Kolomnaam': df.columns.tolist()})
+            st.dataframe(kolomnamen_df, use_container_width=True)
+            
+            # Toon eerste 3 regels in een nette tabel met verbeterde styling
+            st.write(f"Eerste 3 regels van {label}:")
+            preview_df = df.head(3).copy()
+            preview_df = preview_df.style.set_properties(**{'text-align': 'left'})
+            preview_df = preview_df.set_table_styles([
+                {'selector': 'th', 'props': [('text-align', 'left')]},
+                {'selector': 'td', 'props': [('text-align', 'left')]}
+            ])
+            st.dataframe(preview_df, use_container_width=True)
+            
+            return df
+        except Exception as e:
+            st.error(f"Fout bij inlezen bestand: {e}")
+            st.write("Tip: Controleer of:")
+            st.write("1. Het bestand niet leeg is")
+            st.write("2. Het bestand kolomnamen bevat")
+            if file_extension == 'csv':
+                st.write("3. Het bestand gebruikt komma's of puntkomma's als scheidingsteken")
+                st.write("4. Alle regels hetzelfde aantal kolommen hebben")
+                st.write("5. Er geen onverwachte regelbreuken in de data zitten")
+            logging.error(f"Fout bij inlezen bestand ({label}): {e}")
     return None
 
 def vergelijk_data(df_a, df_b, key_columns):
@@ -288,15 +242,11 @@ with tab1:
 
     with col1:
         st.subheader("Databron A")
-        bron_a = st.selectbox("Kies databron A", ["Bestand (CSV/Excel)", "Snowflake"], key="bron_a")
+        df_a = load_input("Bron A")
 
     with col2:
         st.subheader("Databron B")
-        bron_b = st.selectbox("Kies databron B", ["Bestand (CSV/Excel)", "Snowflake"], key="bron_b")
-
-    # Laad de data voor beide bronnen
-    df_a = load_input(bron_a, "Bron A")
-    df_b = load_input(bron_b, "Bron B")
+        df_b = load_input("Bron B")
 
 with tab2:
     if df_a is not None and df_b is not None:
@@ -409,27 +359,6 @@ with tab3:
                                 # Tel het aantal unieke rijen per type verschil
                                 verschil_types = verschillen['Verschil Type'].value_counts()
                                 
-                                # Maak een staafdiagram van de verschillen
-                                fig = go.Figure(data=[
-                                    go.Bar(
-                                        x=verschil_types.index,
-                                        y=verschil_types.values,
-                                        text=verschil_types.values,
-                                        textposition='auto',
-                                        marker_color='#FF4B4B'
-                                    )
-                                ])
-                                
-                                fig.update_layout(
-                                    title="Verdeling van verschillen",
-                                    xaxis_title="Type verschil",
-                                    yaxis_title="Aantal",
-                                    showlegend=False,
-                                    height=400
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
-                                
                                 # Toon de verschillen in een tabel
                                 st.subheader("Gedetailleerde verschillen")
                                 st.dataframe(verschillen, use_container_width=True)
@@ -504,27 +433,6 @@ with tab3:
                                 
                                 # Tel het aantal unieke rijen per type verschil
                                 verschil_types = verschillen['Verschil Type'].value_counts()
-                                
-                                # Maak een staafdiagram van de verschillen
-                                fig = go.Figure(data=[
-                                    go.Bar(
-                                        x=verschil_types.index,
-                                        y=verschil_types.values,
-                                        text=verschil_types.values,
-                                        textposition='auto',
-                                        marker_color='#FF4B4B'
-                                    )
-                                ])
-                                
-                                fig.update_layout(
-                                    title="Verdeling van verschillen",
-                                    xaxis_title="Type verschil",
-                                    yaxis_title="Aantal",
-                                    showlegend=False,
-                                    height=400
-                                )
-                                
-                                st.plotly_chart(fig, use_container_width=True)
                                 
                                 # Toon de verschillen in een tabel
                                 st.subheader("Gedetailleerde verschillen")
